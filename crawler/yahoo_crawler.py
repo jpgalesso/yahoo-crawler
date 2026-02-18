@@ -20,7 +20,7 @@ class YahooCrawler:
     def __init__(self, region):
         self.region = region
         self.sanitized_region = self._sanitize_name(region)
-        self.url = "https://finance.yahoo.com/research-hub/screener/equity/"
+        self.url = "https://finance.yahoo.com/research-hub/screener/equity/?start=0&count=100"
         self.driver = self._start_driver()
         self.data = []
         self.start_time = None
@@ -49,10 +49,10 @@ class YahooCrawler:
     def access_page(self):
         self.driver.get(self.url)
 
-        wait = WebDriverWait(self.driver, 10)  # ⬅ timeout reduzido
+        wait = WebDriverWait(self.driver, 5)  # ⬅ timeout reduzido
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-        time.sleep(2)
+        time.sleep(1)
         self._apply_region_filter()
         self._change_page_size_to_100()
 
@@ -66,7 +66,7 @@ class YahooCrawler:
                 By.XPATH, "//button[contains(., 'Region')]"
             )
             region_button.click()
-            time.sleep(1)
+            time.sleep(0.5)
 
             # remove United States se marcado
             try:
@@ -75,7 +75,7 @@ class YahooCrawler:
                     "//span[contains(text(),'United States')]"
                 )
                 self.driver.execute_script("arguments[0].click();", us)
-                time.sleep(0.5)
+                time.sleep(0.2)
             except:
                 pass
 
@@ -92,7 +92,7 @@ class YahooCrawler:
             )
             apply_btn.click()
 
-            time.sleep(3)
+            time.sleep(1)
 
         except Exception as e:
             logging.error(f"Erro filtro região: {e}")
@@ -105,42 +105,25 @@ class YahooCrawler:
         try:
             print("Alterando resultados por página para 100...")
 
-            wait = WebDriverWait(self.driver, 10)
-
-            # botão atual que mostra "25"
-            page_size_button = wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, "//button[@aria-label='25']")
-                )
+            dropdown = self.driver.find_element(
+                By.XPATH,
+                "//button[contains(@aria-label,'Rows per page')]"
             )
 
-            # clica para abrir o dropdown
-            self.driver.execute_script(
-                "arguments[0].click();",
-                page_size_button
+            dropdown.click()
+            time.sleep(0.2)
+
+            option_100 = self.driver.find_element(
+                By.XPATH,
+                "//span[text()='100']"
             )
+
+            self.driver.execute_script("arguments[0].click();", option_100)
 
             time.sleep(1)
 
-            # seleciona opção 100 dentro do menu aberto
-            option_100 = wait.until(
-                EC.element_to_be_clickable(
-                    (By.XPATH, "//div[@role='option']//span[text()='100']")
-                )
-            )
-
-            self.driver.execute_script(
-                "arguments[0].click();",
-                option_100
-            )
-
-            time.sleep(3)
-
-            print("Page size alterado para 100 com sucesso.")
-
         except Exception as e:
             logging.warning(f"Não foi possível alterar page size: {e}")
-
 
     # ---------------------------------------------------
     # PAGINATION (ANCHOR CORRETA)
@@ -179,7 +162,7 @@ class YahooCrawler:
                 )
 
                 page += 1
-                time.sleep(2)
+                time.sleep(1)
 
             except NoSuchElementException:
                 break

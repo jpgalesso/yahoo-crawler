@@ -109,7 +109,7 @@ Coloque o executável do ChromeDriver na pasta do projeto ou configure no PATH d
 EXECUTANDO O PROJETO
 ----------------------------------------
 
-python crawler.py
+python main.py
 
 O programa solicitará a região desejada.
 

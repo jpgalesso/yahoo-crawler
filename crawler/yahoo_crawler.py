@@ -3,20 +3,28 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 
 from crawler.parser import YahooParser
 
 import pandas as pd
 import time
+import os
+import logging
+from datetime import datetime
+import re
 
 
 class YahooCrawler:
 
     def __init__(self, region):
         self.region = region
+        self.sanitized_region = self._sanitize_name(region)
         self.url = "https://finance.yahoo.com/research-hub/screener/equity/"
         self.driver = self._start_driver()
         self.data = []
+        self.start_time = None
+        self._setup_logging()
 
     def _start_driver(self):
         service = Service()
@@ -24,46 +32,197 @@ class YahooCrawler:
         options.add_argument("--start-maximized")
         return webdriver.Chrome(service=service, options=options)
 
+    def _sanitize_name(self, name):
+        return re.sub(r'[^A-Za-z0-9_-]', '_', name.strip())
+
+    def _setup_logging(self):
+        os.makedirs("exports/logs", exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logging.basicConfig(
+            filename=f"exports/logs/execution_{self.sanitized_region}_{ts}.log",
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s"
+        )
+
+    # ---------------------------------------------------
+
     def access_page(self):
         self.driver.get(self.url)
 
-        wait = WebDriverWait(self.driver, 20)
+        wait = WebDriverWait(self.driver, 10)  # ⬅ timeout reduzido
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
 
-        time.sleep(3)
+        time.sleep(2)
         self._apply_region_filter()
+        self._change_page_size_to_100()
+
+    # ---------------------------------------------------
+    # REMOVE US + APPLY REGION
+    # ---------------------------------------------------
 
     def _apply_region_filter(self):
         try:
-            region_button = self.driver.find_element(By.XPATH, "//button[contains(., 'Region')]")
+            region_button = self.driver.find_element(
+                By.XPATH, "//button[contains(., 'Region')]"
+            )
             region_button.click()
-            time.sleep(2)
+            time.sleep(1)
 
-            region_option = self.driver.find_element(By.XPATH, f"//span[contains(text(), '{self.region}')]")
-            region_option.click()
-            time.sleep(2)
+            # remove United States se marcado
+            try:
+                us = self.driver.find_element(
+                    By.XPATH,
+                    "//span[contains(text(),'United States')]"
+                )
+                self.driver.execute_script("arguments[0].click();", us)
+                time.sleep(0.5)
+            except:
+                pass
 
-            apply_button = self.driver.find_element(By.XPATH, "//button[contains(., 'Apply')]")
-            apply_button.click()
+            # marca região desejada
+            region_option = self.driver.find_element(
+                By.XPATH,
+                f"//span[contains(text(),'{self.region}')]"
+            )
+            self.driver.execute_script("arguments[0].click();", region_option)
 
-            time.sleep(5)
+            apply_btn = self.driver.find_element(
+                By.XPATH,
+                "//button[contains(., 'Apply')]"
+            )
+            apply_btn.click()
+
+            time.sleep(3)
 
         except Exception as e:
-            print("Erro ao aplicar filtro:", e)
+            logging.error(f"Erro filtro região: {e}")
 
-    def extract_data(self):
-        html = self.driver.page_source
+    # ---------------------------------------------------
+    # ALTERA PAGE SIZE PARA 100
+    # ---------------------------------------------------
+
+    def _change_page_size_to_100(self):
+        try:
+            print("Alterando resultados por página para 100...")
+
+            wait = WebDriverWait(self.driver, 10)
+
+            # botão atual que mostra "25"
+            page_size_button = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[@aria-label='25']")
+                )
+            )
+
+            # clica para abrir o dropdown
+            self.driver.execute_script(
+                "arguments[0].click();",
+                page_size_button
+            )
+
+            time.sleep(1)
+
+            # seleciona opção 100 dentro do menu aberto
+            option_100 = wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//div[@role='option']//span[text()='100']")
+                )
+            )
+
+            self.driver.execute_script(
+                "arguments[0].click();",
+                option_100
+            )
+
+            time.sleep(3)
+
+            print("Page size alterado para 100 com sucesso.")
+
+        except Exception as e:
+            logging.warning(f"Não foi possível alterar page size: {e}")
+
+
+    # ---------------------------------------------------
+    # PAGINATION (ANCHOR CORRETA)
+    # ---------------------------------------------------
+
+    def extract_all_pages(self):
+
         parser = YahooParser()
-        self.data = parser.parse(html)
+        page = 1
+
+        while True:
+
+            print(f"Extraindo página {page}...")
+
+            html = self.driver.page_source
+            self.data.extend(parser.parse(html))
+
+            try:
+                next_btn = self.driver.find_element(
+                    By.CSS_SELECTOR,
+                    "button[data-testid='next-page-button']"
+                )
+
+                # se desabilitado -> fim
+                if next_btn.get_attribute("disabled"):
+                    break
+
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView();",
+                    next_btn
+                )
+
+                self.driver.execute_script(
+                    "arguments[0].click();",
+                    next_btn
+                )
+
+                page += 1
+                time.sleep(2)
+
+            except NoSuchElementException:
+                break
+
+    # ---------------------------------------------------
 
     def save_csv(self):
+
         df = pd.DataFrame(self.data)
-        df.to_csv("output.csv", index=False)
+        df.drop_duplicates(inplace=True)
+
+        now = datetime.now()
+
+        export_path = os.path.join(
+            "exports",
+            self.sanitized_region,
+            now.strftime("%Y"),
+            now.strftime("%m"),
+            now.strftime("%d")
+        )
+
+        os.makedirs(export_path, exist_ok=True)
+
+        filename = f"output_{self.sanitized_region}_{now.strftime('%Y%m%d_%H%M%S')}.csv"
+        filepath = os.path.join(export_path, filename)
+
+        df.to_csv(filepath, index=False)
+
+        print(f"\nArquivo salvo em: {filepath}")
+        print(f"Total exportado: {len(df)}")
+
+    # ---------------------------------------------------
 
     def run(self):
+
+        self.start_time = time.time()
+
         try:
             self.access_page()
-            self.extract_data()
+            self.extract_all_pages()
             self.save_csv()
+
         finally:
             self.driver.quit()
+            total = round(time.time() - self.start_time, 2)
+            print(f"\nTempo total: {total} segundos")

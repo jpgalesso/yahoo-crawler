@@ -13,9 +13,9 @@ class YahooParser:
             cols = row.find_all("td")
 
             if len(cols) >= 3:
-                symbol = cols[0].text.strip()
-                name = cols[1].text.strip()
-                price = cols[2].text.strip()
+                symbol = cols[1].text.strip()
+                name = cols[2].text.strip()
+                price = cols[4].text.strip()
 
                 data.append({
                     "symbol": symbol,
